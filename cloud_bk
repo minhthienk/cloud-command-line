@@ -1,0 +1,220 @@
+#!/usr/bin/python
+from setproctitle import setproctitle
+setproctitle('cloud')
+print('cloud version v1.02')
+# v01.01 - first release
+# v01.02 - add shared with me flag
+
+
+import os
+import sys
+import tempfile
+import re
+
+CONFIG_FILE = '.cloud_config'
+SHARED_WITH_ME_FLAG = ' --drive-shared-with-me '
+STATUS_FILE_NAME = '.cloud_status'
+GLOBAL_FLAGS = ' --update --verbose --transfers 30 --checkers 8 ' + \
+               '--contimeout 60s --timeout 300s --retries 1 --low-level-retries 10 --stats 1s ' + \
+               ' --exclude "*.ini" ' + \
+               ' --exclude "cloud.py" ' +  \
+               ' --exclude "cloud" ' +  \
+               ' --exclude "**~**" ' +  \
+               ' --exclude "**{}**"'.format(STATUS_FILE_NAME) + \
+               ' --exclude "**{}**"'.format(CONFIG_FILE) + \
+               ' '
+
+
+
+
+
+def create_config(cloud_drive, folder_id):
+    with open(CONFIG_FILE, 'w') as file:
+        text = cloud_drive + '\n' + folder_id
+        file.write(text)
+        
+def get_config():
+    try:
+        with open(CONFIG_FILE, 'r') as file:
+            cloud_drive = file.readline().replace('\n','')
+            id_or_path = file.readline().replace('\n','').replace('id_or_path:','').replace(' ','')
+            folder = file.readline().replace('\n','')
+            if id_or_path=='id':
+                cloud = ' {}: --drive-root-folder-id "{}"'.format(cloud_drive, folder)
+            else:
+                cloud = ' {}:{}'.format(cloud_drive, folder)
+            
+            flags = ''
+            
+            while True:
+                next_line = file.readline().replace('\n','')
+                flags += ' ' + next_line + ' '
+                if next_line=='': break
+
+    except Exception as e:
+        print(e)
+        print('No config found for this folder')
+        return None, None
+
+    
+    
+    return cloud, flags
+
+
+
+def check():
+    rclone_cmd = 'rclone check ' + GLOBAL_FLAGS + \
+                 ' --combined ' + STATUS_FILE_NAME + ' ' + \
+                    CLOUD + ' ' + LOCAL
+                    
+    print(rclone_cmd)
+    os.system(rclone_cmd)
+    with open(STATUS_FILE_NAME, 'r') as file:
+        diff = file.read()
+        diff = '\n' + diff
+        diff = re.sub(r'\n\+', '\n    only cloud: ', diff)
+        diff = re.sub(r'\n\-', '\n    only local: ', diff)
+        diff = re.sub(r'\n\=', '\n          same: ', diff)
+        diff = re.sub(r'\n\*', '\n     different: ', diff)
+        diff = re.sub(r'\n\!', '\n         error: ', diff)
+        diff = '\n'.join(sorted(diff.split('\n')))
+    diff = '\n'.join(sorted(diff.split('\n')))
+    print('\n======================= Comparison result ======================='+diff)
+    print('Number of items: ', len(diff.split('\n'))-2)
+    with open(STATUS_FILE_NAME, 'w') as file:
+        file.write(diff)
+
+
+
+def download(flags=''):
+    rclone_cmd = 'rclone copy ' + GLOBAL_FLAGS + CLOUD + ' ' + LOCAL  + flags
+    print(rclone_cmd)
+    os.system(rclone_cmd)
+
+
+def upload(flags=''):
+    rclone_cmd = 'rclone copy ' + GLOBAL_FLAGS + LOCAL + ' ' + CLOUD  + flags
+    print(rclone_cmd)
+    os.system(rclone_cmd)
+
+
+def sync(src, des, flags=''):
+    rclone_cmd = 'rclone sync ' + GLOBAL_FLAGS + src + ' ' + des  + flags
+    print(rclone_cmd)
+    os.system(rclone_cmd)
+
+def size(flags=''):
+    rclone_cmd = 'rclone size ' + GLOBAL_FLAGS + ' ' + CLOUD  + flags
+    print(rclone_cmd)
+    os.system(rclone_cmd)
+
+def move():
+    rclone_cmd = 'rclone moveto ' + GLOBAL_FLAGS + ' ' + \
+        'gdrive-minhthienk:/Test_rename.txt gdrive-minhthienk:/Test_renamezzz.txt'
+    print(rclone_cmd)
+    os.system(rclone_cmd)
+
+# find the missing checksum in remote drive
+def check_sum(src, dest):
+    check = 'rclone md5sum ' + dest
+    os.system(check)
+
+def exe_cmd(cmd):
+    if cmd=='status':
+        check()
+    elif cmd=='exit' or cmd=='quit':
+        sys.exit()
+
+    elif cmd=='size':
+        print('Calculating size of all data from: ', CLOUD)
+        size()
+
+
+    elif cmd=='config':
+        cloud_drive = input('Input your drive name which has been created by rclone: ')
+        folder_id = input('Input your drive folder id: ')
+        create_config(cloud_drive, folder_id)
+        
+    elif cmd=='pull': # pull data from cloud drive
+        print('Pulling data from: ', CLOUD)
+        download()
+
+    elif cmd=='push':
+        print('Pushing data to: ', CLOUD)
+        upload()
+
+    elif cmd=='sync':
+        select = input('How do you want to sync:'
+                        '\n    1. all same as CLOUD' + \
+                        '\n    2. all same as LOCAL' + \
+                        '\n >>> select (type the number): ')
+        if select=='1':
+            src = CLOUD
+            des = LOCAL
+        elif select=='2':
+            src = LOCAL
+            des = CLOUD
+        else:
+            print('No option selected, can not sync')
+            return
+        
+        # start to sync
+        sync(src, des, flags='')
+    elif cmd=='move':
+        print('Rename: ', CLOUD)
+        move()
+
+    else:
+        print(('Error: unknown your command "{}"" for "cloud"\n' + \
+              'Available commands: \n' + \
+              '        config\n' + \
+              '        status\n' + \
+              '        size\n' + \
+              '        pull\n' + \
+              '        push\n' + \
+              '        sync\n' + \
+              '        exit').format(cmd))
+
+# ------------------------------------------------
+for cmd in sys.argv:
+    if cmd=='cloud': continue
+    if '\\' in cmd or '/' in cmd: continue
+    break # after arg clound and path => select => break
+
+
+
+if cmd=='config':
+    exe_cmd('config')
+    cloud_drive, folder_id, flags = get_config()
+else:
+    cloud_drive, folder_id, flags = get_config()
+    if None in [cloud_drive, folder_id]:
+        exe_cmd('config')
+GLOBAL_FLAGS = GLOBAL_FLAGS + ' ' + flags + ' '
+
+
+
+if cmd!='config':
+    LOCAL ='"' +  os.getcwd() + '"'
+    CLOUD = '{}: --drive-root-folder-id "{}"'.format(cloud_drive, folder_id)
+    if 'shared' in sys.argv:
+    	CLOUD = SHARED_WITH_ME_FLAG + CLOUD
+    exe_cmd(cmd)
+
+
+
+
+# todo: them path drive goc, neu khac version => update
+# todo: chia 2 truong hop khi lay id, 1 la lay folder path, 2 là id
+# v1.00.01
+# April 28 2021 23:40
+
+#===========================================================
+
+
+
+
+
+
+
+
